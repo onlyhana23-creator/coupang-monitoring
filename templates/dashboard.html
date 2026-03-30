@@ -3,16 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>쿠팡 모니터링 대시보드</title>
+  <title>쿠팡 모니터링 · 멤버십 뉴스브리핑</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: 'Malgun Gothic', sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
-    h1 { margin-top: 0; }
+    body { font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; margin: 0; padding: 24px; background: #e8eaed; }
+    .page-title { margin: 0 0 8px; font-size: 1.75rem; font-weight: 700; color: #202124; }
+    .wiki-sub { margin: 0 0 28px; font-size: 0.95rem; line-height: 1.55; color: #3c4043; }
+    .mega { border-radius: 14px; overflow: hidden; margin-bottom: 28px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .mega-head { padding: 18px 22px; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+    .mega-monitoring .mega-head { background: linear-gradient(135deg, #1a73e8 0%, #1557b0 100%); color: #fff; }
+    .mega-briefing .mega-head { background: linear-gradient(135deg, #0d7377 0%, #14a085 100%); color: #fff; }
+    .mega-body { background: #fff; padding: 20px 22px 24px; }
     h2 { margin: 24px 0 12px; font-size: 1.1rem; color: #333; }
-    .section { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    h2:first-child { margin-top: 0; }
+    .section { background: #fafbff; border-radius: 8px; padding: 18px; margin-bottom: 16px; border: 1px solid #e8eaf0; }
+    .briefing-section-title { margin: 20px 0 10px; font-size: 1rem; font-weight: 600; color: #0d7377; border-bottom: 2px solid #b2dfdb; padding-bottom: 6px; }
+    .briefing-section-title:first-child { margin-top: 0; }
     .cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-    .card { flex: 1; min-width: 180px; padding: 16px; background: #fafafa; border-radius: 8px; border: 1px solid #eee; }
+    .card { flex: 1; min-width: 180px; padding: 16px; background: #fff; border-radius: 8px; border: 1px solid #eee; }
     .card .label { font-size: 0.85rem; color: #666; margin-bottom: 4px; }
     .card .value { font-size: 1.5rem; font-weight: 600; }
     .card .pct { font-size: 0.9rem; margin-top: 6px; }
@@ -28,68 +37,74 @@
     .wau-value { font-size: 1.8rem; font-weight: 600; color: #1a73e8; margin: 8px 0; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; }
-    th { background: #f5f5f5; font-weight: 600; }
+    th { background: #f0f4f8; font-weight: 600; }
     a { color: #1a73e8; text-decoration: none; }
     a:hover { text-decoration: underline; }
     .loading { color: #888; }
-    .excel-toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; padding: 12px 0; border-bottom: 1px solid #eee; }
-    .excel-toolbar a.btn, .excel-toolbar button.btn { padding: 8px 14px; border: 1px solid #1a73e8; background: #fff; color: #1a73e8; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 14px; }
-    .excel-toolbar a.btn:hover, .excel-toolbar button.btn:hover { background: #1a73e8; color: #fff; }
-    .excel-toolbar input[type="file"] { font-size: 13px; }
-    .excel-toolbar .upload-status { font-size: 13px; color: #2e7d32; }
+    .briefing-meta { font-size: 0.85rem; color: #5f6368; margin-bottom: 16px; }
   </style>
 </head>
 <body>
-  <h1>쿠팡 모니터링 대시보드</h1>
+  <h1 class="page-title">쿠팡 모니터링 · 멤버십 뉴스브리핑</h1>
+  <p class="wiki-sub">
+    🔎 쿠팡 CRM/프로모션 및 UX 리서치 WIKI:
+    <a href="https://wiki.navercorp.com/x/yZX3JgE" target="_blank" rel="noopener">wiki.navercorp.com/x/yZX3JgE</a>
+    · 뉴스브리핑 아카이브:
+    <a href="https://wiki.navercorp.com/x/gAV86Q" target="_blank" rel="noopener">wiki.navercorp.com/x/gAV86Q</a>
+  </p>
 
-  <div class="excel-toolbar">
-    <span><strong>엑셀 다운로드:</strong></span>
-    <a href="/api/excel/download/payment" class="btn" download>결제액 엑셀</a>
-    <a href="/api/excel/download/wau" class="btn" download>WAU 엑셀</a>
-    <span style="margin-left: 12px;"><strong>엑셀 업로드:</strong></span>
-    <label><input type="file" id="upload-payment" accept=".xlsx" style="margin-right: 4px;">결제액 엑셀</label>
-    <label><input type="file" id="upload-wau" accept=".xlsx" style="margin-right: 4px;">WAU 엑셀</label>
-    <button type="button" class="btn" id="upload-btn">업로드</button>
-    <span id="upload-status" class="upload-status"></span>
+  <div class="mega mega-monitoring">
+    <div class="mega-head">1) 쿠팡 모니터링</div>
+    <div class="mega-body">
+      <div class="section">
+        <h2>1. 쿠팡 일간 결제액 모니터링</h2>
+        <div class="cards" id="payment-cards">
+          <span class="loading">로딩 중...</span>
+        </div>
+        <div class="toggle-wrap">
+          <button type="button" id="view-daily" class="active">일간 (최근 30일)</button>
+          <button type="button" id="view-weekly">주간 평균</button>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="chart-payment"></canvas>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>2. 쿠팡 WAU (Android+iOS)</h2>
+        <div class="wau-controls">
+          <button type="button" id="wau-prev">이전 주</button>
+          <span class="week-label" id="wau-week-label">-</span>
+          <button type="button" id="wau-next">다음 주</button>
+        </div>
+        <div class="wau-value" id="wau-value">-</div>
+        <div class="chart-wrap">
+          <canvas id="chart-wau"></canvas>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>3. 쿠팡 관련 유의미 뉴스 (최근 2주)</h2>
+        <table>
+          <thead>
+            <tr><th>날짜</th><th>기사제목</th><th>링크</th></tr>
+          </thead>
+          <tbody id="news-tbody">
+            <tr><td colspan="3" class="loading">로딩 중...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
-  <div class="section">
-    <h2>1. 쿠팡 일간 결제액 모니터링</h2>
-    <div class="cards" id="payment-cards">
-      <span class="loading">로딩 중...</span>
+  <div class="mega mega-briefing">
+    <div class="mega-head">2) 뉴스브리핑 (네이버 멤버십)</div>
+    <div class="mega-body">
+      <p class="briefing-meta" id="briefing-meta">전주 중심 · 최근 14일 수집 · 섹션 자동 분류 (키워드 기반)</p>
+      <div id="briefing-root">
+        <p class="loading">뉴스브리핑 로딩 중...</p>
+      </div>
     </div>
-    <div class="toggle-wrap">
-      <button type="button" id="view-daily" class="active">일간 (최근 30일)</button>
-      <button type="button" id="view-weekly">주간 평균</button>
-    </div>
-    <div class="chart-wrap">
-      <canvas id="chart-payment"></canvas>
-    </div>
-  </div>
-
-  <div class="section">
-    <h2>2. 쿠팡 WAU (Android+iOS)</h2>
-    <div class="wau-controls">
-      <button type="button" id="wau-prev">이전 주</button>
-      <span class="week-label" id="wau-week-label">-</span>
-      <button type="button" id="wau-next">다음 주</button>
-    </div>
-    <div class="wau-value" id="wau-value">-</div>
-    <div class="chart-wrap">
-      <canvas id="chart-wau"></canvas>
-    </div>
-  </div>
-
-  <div class="section">
-    <h2>3. 쿠팡 혜택·와우 멤버십 뉴스 (최근 2주)</h2>
-    <table>
-      <thead>
-        <tr><th>날짜</th><th>기사제목</th><th>링크</th></tr>
-      </thead>
-      <tbody id="news-tbody">
-        <tr><td colspan="3" class="loading">로딩 중...</td></tr>
-      </tbody>
-    </table>
   </div>
 
   <script>
@@ -101,7 +116,7 @@
   let wauIndex = 0;
   let chartPayment = null;
   let chartWau = null;
-  let paymentViewMode = 'daily'; // 'daily' | 'weekly'
+  let paymentViewMode = 'daily';
 
   function formatNum(v) {
     if (v == null || v === '' || isNaN(v)) return '-';
@@ -136,13 +151,22 @@
     const j = await r.json();
     return { data: j.data || [], message: j.message || '' };
   }
+  async function fetchNewsBriefing() {
+    const r = await fetch(API + '/news-briefing');
+    const j = await r.json();
+    return {
+      sections: j.sections || [],
+      message: j.message || '',
+      collected_at: j.collected_at || ''
+    };
+  }
 
   function renderPaymentCards(data) {
     if (!data || data.length === 0) {
       document.getElementById('payment-cards').innerHTML = '';
       return;
     }
-    const last = data[data.length - 1];  // 최신일(맨 아래 행) 기준: 금액·횟수·결제자·WoW
+    const last = data[data.length - 1];
     const html = `
       <div class="card">
         <div class="label">순 결제금액 (최신일: ${last.date})</div>
@@ -276,11 +300,19 @@
   function renderNews(rows, message) {
     const tbody = document.getElementById('news-tbody');
     if (!rows || rows.length === 0) {
-      const msg = message || '쿠팡 혜택 변경·와우 멤버십 관련 뉴스를 보려면 config.yaml에 네이버 검색 API(애플리케이션 등록) client_id, client_secret을 설정하세요.';
+      const msg = message || '유의미 뉴스(실적·멤버십·배송·시장반응·기술 등)를 보려면 config.yaml에 네이버 검색 API client_id, client_secret을 설정하세요.';
       tbody.innerHTML = '<tr><td colspan="3" class="loading">' + escapeHtml(msg) + '</td></tr>';
       return;
     }
-    tbody.innerHTML = rows.map(r => `
+    const sorted = rows.slice().sort((a, b) => {
+      const da = (a.date || '').trim();
+      const db = (b.date || '').trim();
+      if (da && db) return db.localeCompare(da);
+      if (db && !da) return 1;
+      if (da && !db) return -1;
+      return 0;
+    });
+    tbody.innerHTML = sorted.map(r => `
       <tr>
         <td>${escapeHtml(r.date || '')}</td>
         <td>${escapeHtml(r.title || '')}</td>
@@ -288,6 +320,38 @@
       </tr>
     `).join('');
   }
+
+  function renderBriefing(sections, message, collectedAt) {
+    const root = document.getElementById('briefing-root');
+    const meta = document.getElementById('briefing-meta');
+    if (collectedAt) {
+      meta.textContent = '수집 시각: ' + collectedAt + ' · 전주 중심 · 최근 14일 · 섹션 자동 분류';
+    }
+    if (!sections || sections.length === 0) {
+      root.innerHTML = '<p class="loading">' + escapeHtml(message || '표시할 브리핑 뉴스가 없습니다.') + '</p>';
+      return;
+    }
+    let html = '';
+    sections.forEach(sec => {
+      const items = sec.items || [];
+      const sorted = items.slice().sort((a, b) => {
+        const da = (a.date || '').trim();
+        const db = (b.date || '').trim();
+        if (da && db) return db.localeCompare(da);
+        return 0;
+      });
+      html += '<h3 class="briefing-section-title">' + escapeHtml(sec.title || sec.id) + '</h3>';
+      html += '<div class="section" style="margin-bottom:12px"><table><thead><tr><th>날짜</th><th>기사제목</th><th>링크</th></tr></thead><tbody>';
+      if (!sorted.length) {
+        html += '<tr><td colspan="3" class="loading">해당 섹션 기사 없음</td></tr>';
+      } else {
+        html += sorted.map(r => '<tr><td>' + escapeHtml(r.date || '') + '</td><td>' + escapeHtml(r.title || '') + '</td><td><a href="' + escapeHtml(r.link || '#') + '" target="_blank" rel="noopener">바로가기</a></td></tr>').join('');
+      }
+      html += '</tbody></table></div>';
+    });
+    root.innerHTML = html;
+  }
+
   function escapeHtml(s) {
     const d = document.createElement('div');
     d.textContent = s;
@@ -315,34 +379,6 @@
     renderWau();
   };
 
-  document.getElementById('upload-btn').onclick = async function() {
-    const paymentInput = document.getElementById('upload-payment');
-    const wauInput = document.getElementById('upload-wau');
-    const statusEl = document.getElementById('upload-status');
-    statusEl.textContent = '';
-    const form = new FormData();
-    if (paymentInput.files && paymentInput.files[0]) form.append('payment', paymentInput.files[0]);
-    if (wauInput.files && wauInput.files[0]) form.append('wau', wauInput.files[0]);
-    if (!form.has('payment') && !form.has('wau')) {
-      statusEl.textContent = '결제액 또는 WAU 엑셀 파일을 선택하세요.';
-      return;
-    }
-    try {
-      const r = await fetch(API + '/excel/upload', { method: 'POST', body: form });
-      const j = await r.json();
-      if (r.ok && j.ok) {
-        statusEl.textContent = '저장됨: ' + (j.saved && j.saved.length ? j.saved.join(', ') : '');
-        paymentInput.value = '';
-        wauInput.value = '';
-        load();
-      } else {
-        statusEl.textContent = j.error || '업로드 실패';
-      }
-    } catch (e) {
-      statusEl.textContent = '업로드 실패';
-    }
-  };
-
   async function load() {
     try {
       [paymentDaily, paymentWeekly, wauWeekly] = await Promise.all([
@@ -355,12 +391,14 @@
       wauIndex = wauWeekly.length - 1;
       renderWau();
       renderWauChart();
-      const newsRes = await fetchNews();
+      const [newsRes, briefingRes] = await Promise.all([fetchNews(), fetchNewsBriefing()]);
       renderNews(newsRes.data, newsRes.message);
+      renderBriefing(briefingRes.sections, briefingRes.message, briefingRes.collected_at);
     } catch (e) {
       console.error(e);
       document.getElementById('payment-cards').innerHTML = '';
-      document.getElementById('news-tbody').innerHTML = '<tr><td colspan="3" class="loading"></td></tr>';
+      document.getElementById('news-tbody').innerHTML = '<tr><td colspan="3" class="loading">로드 오류</td></tr>';
+      document.getElementById('briefing-root').innerHTML = '<p class="loading">뉴스브리핑 로드 오류</p>';
     }
   }
   load();

@@ -22,6 +22,7 @@ from src.excel_loader import (
     load_wau_df,
 )
 from src.news_collector import collect_coupang_news, collect_coupang_news_recent_2w
+from src.membership_briefing_collector import collect_membership_briefing_recent
 from models import db
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
@@ -159,6 +160,21 @@ def api_news():
     items = result.get("items", [])
     rows = [{"title": x.get("title", ""), "link": x.get("link", ""), "date": x.get("date", "")} for x in items]
     out = {"data": rows}
+    if result.get("message"):
+        out["message"] = result["message"]
+    return jsonify(out)
+
+
+@app.route("/api/news-briefing")
+def api_news_briefing():
+    """멤버십 뉴스브리핑: 섹션별 분류, 최근 14일(전주 포함)."""
+    config = load_config()
+    paths = _get_paths()
+    result = collect_membership_briefing_recent(config, paths["news_cache_dir"], days=14)
+    out = {
+        "collected_at": result.get("collected_at", ""),
+        "sections": result.get("sections", []),
+    }
     if result.get("message"):
         out["message"] = result["message"]
     return jsonify(out)
