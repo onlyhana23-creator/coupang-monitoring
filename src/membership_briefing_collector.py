@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from datetime import datetime, timedelta
 
+from src.config import get_naver_search_credentials
 from src.news_collector import (
     fetch_naver_news,
     _strip_html,
@@ -174,9 +175,7 @@ def _pick_section_id(title_plain: str, body_plain: str) -> str:
 
 
 def collect_membership_briefing_recent(config: dict, cache_dir: Path, days: int = 14):
-    naver = config.get("naver_search") or {}
-    cid = naver.get("client_id") or os.getenv("NAVER_CLIENT_ID")
-    csec = naver.get("client_secret") or os.getenv("NAVER_CLIENT_SECRET")
+    cid, csec = get_naver_search_credentials(config)
     cache_dir = Path(cache_dir)
     if os.environ.get("VERCEL"):
         cache_dir = Path("/tmp/news_cache")
@@ -187,7 +186,7 @@ def collect_membership_briefing_recent(config: dict, cache_dir: Path, days: int 
         return {
             "collected_at": datetime.now().isoformat(),
             "sections": [],
-            "message": "config.yaml에 네이버 검색 API 또는 환경변수 NAVER_CLIENT_ID/SECRET을 설정하면 뉴스브리핑이 표시됩니다.",
+            "message": "네이버 뉴스 검색 API: NAVER_CLIENT_ID/SECRET(환경변수) 또는 config의 naver_search를 설정하면 뉴스브리핑이 표시됩니다.",
         }
 
     if cache_file.exists():

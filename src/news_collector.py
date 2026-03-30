@@ -10,12 +10,92 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 import requests
 
+from src.config import get_naver_search_credentials
+
+# 네이버 개발자센터: 검색 > 뉴스 (뉴스 검색 API)
 NAVER_NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
 RECENT30D_CACHE_FILE = "coupang_news_recent30d.json"
 RECENT2W_CACHE_FILE = "coupang_news_recent2w.json"
 
-# 쿠팡 혜택·와우 멤버십 관련만 포함 (최소 하나 포함)
-INCLUDE_KEYWORDS = ("혜택", "멤버십", "와우", "변경", "개편", "조정", "무료배송", "회원혜택")
+# 네이버 뉴스 검색 쿼리 (중복은 수집 후 URL/제목으로 제거)
+NEWS_SEARCH_QUERIES = [
+    "쿠팡 실적",
+    "쿠팡 매출",
+    "쿠팡 이용자",
+    "쿠팡 AI",
+    "쿠팡 물류",
+    "쿠팡 배송 정책",
+    "쿠팡 무료배송",
+    "와우 멤버십",
+    "쿠팡 와우",
+    "쿠팡 멤버십",
+    "쿠팡 혜택 변경",
+    "쿠팡 경영",
+    "쿠팡 분기",
+    "쿠팡 신사업",
+    "쿠팡 로켓배송",
+    "쿠팡 회원 혜택",
+    "쿠팡 개편",
+]
+
+# Positive: 너무 넓은 단어(시장·배송·투자 단독 등)는 제외해 오탐을 줄임
+_POSITIVE_METRICS = (
+    "실적",
+    "매출",
+    "영업이익",
+    "거래액",
+    "이용자",
+    "MAU",
+    "WAU",
+    "분기",
+    "분기실적",
+    "GMV",
+)
+_POSITIVE_MEMBERSHIP = (
+    "혜택",
+    "멤버십",
+    "와우",
+    "무료배송",
+    "로켓배송",
+    "배송비",
+    "배송정책",
+    "개편",
+    "조정",
+    "회원혜택",
+)
+_POSITIVE_REACTION = (
+    "소비자",
+    "시민단체",
+    "논란",
+    "반발",
+    "비판",
+    "환영",
+    "여론",
+)
+_POSITIVE_TECH = (
+    "AI",
+    "인공지능",
+    "자동화",
+    "물류",
+    "로봇",
+)
+
+# Negative: 제목에 경쟁사가 두드러지는데 쿠팡이 제목에 없을 때
+_COMPETITOR_IN_TITLE = (
+    "컬리",
+    "이마트",
+    "롯데마트",
+    "홈플러스",
+    "SSG",
+    "이마트몰",
+    "SSG닷컴",
+    "네이버쇼핑",
+)
+
+_EMPTY_MEANINGFUL_MSG = (
+    "유의미 뉴스 선정 기준에 맞는 기사가 최근 기간 내에 없습니다. "
+    "(칼럼·타사 위주·위클립 등은 제외됩니다.)"
+)
 
 
 def _strip_html(text):
@@ -59,10 +139,98 @@ def fetch_naver_news(query: str, client_id: str, client_secret: str, display: in
     return r.json().get("items", [])
 
 
+def _should_exclude_news(title_plain: str, body_plain: str) -> bool:
+    """Negative filter. 제목 위주 휴리스틱."""
+    t = title_plain or ""
+    full = (title_plain or "") + " " + (body_plain or "")
+    if re.search(r"\[[^\]]*칼럼[^\]]*\]", t):
+        return True
+    if "사설" in t:
+        return True
+    if "위클립" in t or "[위클립]" in t:
+        return True
+    if "휴무" in t and "쿠팡" not in t:
+        return True
+    if any(c in t for c in _COMPETITOR_IN_TITLE) and "쿠팡" not in t:
+        return True
+    if "쿠팡" not in full and "로켓" not in full and "와우" not in full:
+        return True
+    return False
+
+
+def _has_coupang_brand_context(body_plain: str) -> bool:
+    """쿠팡·로켓·와우 등 브랜드 맥락이 본문(제목+요약)에 있는지."""
+    text = body_plain or ""
+    if "쿠팡" in text:
+        return True
+    if "로켓" in text:
+        return True
+    if "와우" in text:
+        return True
+    return False
+
+
+def _title_clearly_about_coupang(title_plain: str) -> bool:
+    """제목에 쿠팡 사업이 드러나야 함(요약에만 쿠팡 있는 이슈·동아리 기사 등 배제)."""
+    t = title_plain or ""
+    if "쿠팡" in t:
+        return True
+    if "로켓배송" in t or "로켓와우" in t:
+        return True
+    if "와우" in t and any(x in t for x in ("멤버", "멤버십", "혜택", "회원", "배송", "로켓")):
+        return True
+    return False
+
+
+def _matches_positive_signal(body_plain: str) -> bool:
+    """Positive OR: 실적·멤버십/배송·반응·기술 중 하나."""
+    text = body_plain or ""
+    groups = (
+        _POSITIVE_METRICS,
+        _POSITIVE_MEMBERSHIP,
+        _POSITIVE_REACTION,
+        _POSITIVE_TECH,
+    )
+    for grp in groups:
+        if any(k in text for k in grp):
+            return True
+    return False
+
+
+def _is_meaningful_coupang_news(raw_title: str, raw_description: str) -> bool:
+    """유의미 뉴스 선정: Negative 제외 → 제목에 쿠팡 맥락 → 본문 브랜드 → Positive OR."""
+    title = _strip_html(raw_title or "")
+    desc = _strip_html(raw_description or "")
+    full = title + " " + desc
+    if not full.strip():
+        return False
+    if _should_exclude_news(title, full):
+        return False
+    if not _title_clearly_about_coupang(title):
+        return False
+    if not _has_coupang_brand_context(full):
+        return False
+    if not _matches_positive_signal(full):
+        return False
+    if "광고" in full or "홍보" in full:
+        if not any(k in full for k in ("혜택", "멤버십", "실적", "매출", "배송", "와우", "쿠팡")):
+            return False
+    return True
+
+
+def _filter_meaningful_items(items: list) -> list:
+    return [
+        x
+        for x in items
+        if _is_meaningful_coupang_news(
+            (x.get("title") or "").strip(),
+            (x.get("description") or "").strip(),
+        )
+    ]
+
+
 def collect_coupang_news(config: dict, cache_dir: Path, year_week: str):
-    naver = config.get("naver_search") or {}
-    cid = naver.get("client_id") or os.getenv("NAVER_CLIENT_ID")
-    csec = naver.get("client_secret") or os.getenv("NAVER_CLIENT_SECRET")
+    cid, csec = get_naver_search_credentials(config)
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file = cache_dir / f"coupang_news_{year_week.replace('-', '_')}.json"
@@ -73,9 +241,8 @@ def collect_coupang_news(config: dict, cache_dir: Path, year_week: str):
         except Exception:
             pass
     items = []
-    for q in ["쿠팡", "쿠팡 결제", "쿠팡 로켓배송", "쿠팡 이벤트"]:
+    for q in ["쿠팡", "쿠팡 결제", "쿠팡 로켓배송", "쿠팡 이벤트", "쿠팡 실적", "와우 멤버십"]:
         items.extend(fetch_naver_news(q, cid or "", csec or "", display=15, sort="date"))
-    # 중복 제거: URL(link) 기준 1건만 유지. URL 없으면 제목 기준.
     seen_url = set()
     seen_title = set()
     unique = []
@@ -94,6 +261,7 @@ def collect_coupang_news(config: dict, cache_dir: Path, year_week: str):
         else:
             seen_title.add(t)
         unique.append({"title": t, "link": link or x.get("link"), "description": (x.get("description") or "").strip(), "pubDate": x.get("pubDate")})
+    unique = _filter_meaningful_items(unique)
     result = {"year_week": year_week, "collected_at": datetime.now().isoformat(), "items": unique[:50]}
     try:
         with open(cache_file, "w", encoding="utf-8") as f:
@@ -101,30 +269,6 @@ def collect_coupang_news(config: dict, cache_dir: Path, year_week: str):
     except Exception:
         pass
     return result
-
-
-def _is_benefit_or_membership_related(title: str, description: str) -> bool:
-    """쿠팡 혜택 변경·와우 멤버십 관련이면 True. 단순 브랜드·행사 광고는 False."""
-    text = (title or "") + " " + (description or "")
-    if not text.strip():
-        return False
-    has_include = any(k in text for k in INCLUDE_KEYWORDS)
-    # 혜택/멤버십/와우/변경 등 관련 키워드가 있어야 포함
-    if not has_include:
-        return False
-    # 광고·홍보만 있으면 제외 (관련 키워드와 함께 있어도 광고성 강하면 제외하지 않음)
-    if "광고" in text or "홍보" in text:
-        if "혜택" not in text and "멤버십" not in text and "변경" not in text:
-            return False
-    return True
-
-
-def _filter_benefit_membership_only(items: list) -> list:
-    """혜택·와우 멤버십 관련 기사만 남기고 단순 광고/행사는 제외."""
-    return [x for x in items if _is_benefit_or_membership_related(
-        (x.get("title") or "").strip(),
-        (x.get("description") or "").strip()
-    )]
 
 
 def _parse_pubdate(pubdate_str):
@@ -146,9 +290,7 @@ def collect_coupang_news_recent_30d(config: dict, cache_dir: Path):
     최근 30일 간 쿠팡 관련 뉴스 수집.
     display=100, sort=date 로 요청 후 pubDate 기준 30일 이내만 필터, URL/제목 중복 제거.
     """
-    naver = config.get("naver_search") or {}
-    cid = naver.get("client_id") or os.getenv("NAVER_CLIENT_ID")
-    csec = naver.get("client_secret") or os.getenv("NAVER_CLIENT_SECRET")
+    cid, csec = get_naver_search_credentials(config)
     cache_dir = Path(cache_dir)
     if os.environ.get("VERCEL"):
         cache_dir = Path("/tmp/news_cache")
@@ -156,7 +298,7 @@ def collect_coupang_news_recent_30d(config: dict, cache_dir: Path):
     cache_file = cache_dir / RECENT30D_CACHE_FILE
 
     if not cid or not csec:
-        return {"items": [], "message": "config.yaml에 네이버 검색 API client_id, client_secret을 설정하면 최근 30일 뉴스가 표시됩니다."}
+        return {"items": [], "message": "네이버 뉴스 검색 API: NAVER_CLIENT_ID/SECRET(환경변수) 또는 config의 naver_search.client_id, client_secret을 설정하면 최근 30일 뉴스가 표시됩니다."}
 
     if cache_file.exists():
         try:
@@ -170,15 +312,12 @@ def collect_coupang_news_recent_30d(config: dict, cache_dir: Path):
 
     raw_items = []
     try:
-        for q in ["쿠팡 혜택 변경", "와우 멤버십", "쿠팡 와우 혜택", "쿠팡 멤버십 변경", "쿠팡 회원 혜택"]:
+        for q in NEWS_SEARCH_QUERIES:
             raw_items.extend(fetch_naver_news(q, cid, csec, display=50, sort="date"))
     except Exception as e:
         return {"items": [], "message": "뉴스 API 오류: " + str(e)}
 
-    items = _filter_benefit_membership_only(raw_items)
-    use_fallback = len(items) == 0
-    if use_fallback:
-        items = raw_items  # 필터 결과 0건이면 필터 없이 최근 뉴스 사용
+    items = _filter_meaningful_items(raw_items)
 
     cutoff = (datetime.now() - timedelta(days=30)).date()
     seen_url = set()
@@ -205,8 +344,8 @@ def collect_coupang_news_recent_30d(config: dict, cache_dir: Path):
         unique.append({"title": t, "link": link or x.get("link"), "description": (x.get("description") or "").strip(), "pubDate": x.get("pubDate")})
 
     result = {"collected_at": datetime.now().isoformat(), "items": unique[:50]}
-    if use_fallback and result["items"]:
-        result["message"] = "혜택·와우 멤버십 관련 기사가 없어 최근 쿠팡 뉴스를 표시합니다."
+    if not result["items"]:
+        result["message"] = _EMPTY_MEANINGFUL_MSG
     try:
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
@@ -220,9 +359,7 @@ def collect_coupang_news_recent_2w(config: dict, cache_dir: Path):
     최근 2주 간 쿠팡 관련 뉴스 수집.
     HTML 태그 제거, URL/제목 정규화로 중복 제거, 날짜 YYYY-MM-DD 포맷.
     """
-    naver = config.get("naver_search") or {}
-    cid = naver.get("client_id") or os.getenv("NAVER_CLIENT_ID")
-    csec = naver.get("client_secret") or os.getenv("NAVER_CLIENT_SECRET")
+    cid, csec = get_naver_search_credentials(config)
     cache_dir = Path(cache_dir)
     if os.environ.get("VERCEL"):
         cache_dir = Path("/tmp/news_cache")
@@ -230,7 +367,7 @@ def collect_coupang_news_recent_2w(config: dict, cache_dir: Path):
     cache_file = cache_dir / RECENT2W_CACHE_FILE
 
     if not cid or not csec:
-        return {"items": [], "message": "config.yaml에 네이버 검색 API client_id, client_secret을 설정하면 최근 2주 뉴스가 표시됩니다."}
+        return {"items": [], "message": "네이버 뉴스 검색 API: NAVER_CLIENT_ID/SECRET(환경변수) 또는 config의 naver_search를 설정하면 최근 2주 뉴스가 표시됩니다."}
 
     if cache_file.exists():
         try:
@@ -244,15 +381,12 @@ def collect_coupang_news_recent_2w(config: dict, cache_dir: Path):
 
     raw_items = []
     try:
-        for q in ["쿠팡 혜택 변경", "와우 멤버십", "쿠팡 와우 혜택", "쿠팡 멤버십 변경", "쿠팡 회원 혜택"]:
+        for q in NEWS_SEARCH_QUERIES:
             raw_items.extend(fetch_naver_news(q, cid, csec, display=50, sort="date"))
     except Exception as e:
         return {"items": [], "message": "뉴스 API 오류: " + str(e)}
 
-    items = _filter_benefit_membership_only(raw_items)
-    use_fallback = len(items) == 0
-    if use_fallback:
-        items = raw_items
+    items = _filter_meaningful_items(raw_items)
 
     cutoff = (datetime.now() - timedelta(days=14)).date()
     seen_url = set()
@@ -292,8 +426,8 @@ def collect_coupang_news_recent_2w(config: dict, cache_dir: Path):
         })
 
     result = {"collected_at": datetime.now().isoformat(), "items": unique[:50]}
-    if use_fallback and result["items"]:
-        result["message"] = "혜택·와우 멤버십 관련 기사가 없어 최근 쿠팡 뉴스를 표시합니다."
+    if not result["items"]:
+        result["message"] = _EMPTY_MEANINGFUL_MSG
     try:
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
@@ -304,8 +438,8 @@ def collect_coupang_news_recent_2w(config: dict, cache_dir: Path):
 
 def news_to_markdown(news_result: dict) -> str:
     if not news_result or not news_result.get("items"):
-        return "해당 주차 쿠팡 혜택·와우 멤버십 관련 뉴스가 수집되지 않았습니다. (네이버 검색 API 설정 시 표시됩니다.)"
-    lines = ["### 쿠팡 혜택·와우 멤버십 뉴스 (결제액·이슈 연관 참고)", ""]
+        return "해당 주차 쿠팡 관련 유의미 뉴스가 수집되지 않았습니다. (네이버 검색 API 설정 시 표시됩니다.)"
+    lines = ["### 쿠팡 관련 유의미 뉴스 (실적·멤버십·배송·시장반응·기술 등)", ""]
     for item in news_result["items"][:20]:
         title = (item.get("title") or "").replace("|", "\\|")
         link = item.get("link") or ""

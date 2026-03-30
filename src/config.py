@@ -3,8 +3,20 @@
 from pathlib import Path
 import os
 import yaml
+from typing import Dict, Optional, Tuple
 
 BASE = Path(__file__).resolve().parent.parent
+
+
+def get_naver_search_credentials(config: Optional[Dict] = None) -> Tuple[str, str]:
+    """
+    네이버 뉴스 검색 API(https://openapi.naver.com/v1/search/news.json) 인증값.
+    환경변수 NAVER_CLIENT_ID, NAVER_CLIENT_SECRET 이 config보다 우선합니다(Vercel 권장).
+    """
+    naver = ((config or {}).get("naver_search") or {})
+    cid = (os.getenv("NAVER_CLIENT_ID") or naver.get("client_id") or "").strip()
+    csec = (os.getenv("NAVER_CLIENT_SECRET") or naver.get("client_secret") or "").strip()
+    return cid, csec
 
 
 def load_config():
@@ -39,18 +51,34 @@ def load_config():
     return data
 
 
+GMV_PATH_KEYS = frozenset({
+    "payment_gmv_sheet",
+    "payment_gmv_header_row",
+    "payment_gmv_col_date",
+    "payment_gmv_col_acnt",
+    "payment_gmv_col_gmv",
+})
+
+
 def get_paths(config):
     """데이터 파일 경로. 엑셀 파일명은 config 또는 기본값 사용."""
     paths = (config.get("paths") or {}).copy()
     paths.setdefault("payment_excel", "cp_payment.xlsx")
     paths.setdefault("wau_excel", "cp_wau.xlsx")
     paths.setdefault("news_cache_dir", "data/news_cache")
+    paths.setdefault("payment_gmv_sheet", None)
+    paths.setdefault("payment_gmv_header_row", None)
+    paths.setdefault("payment_gmv_col_date", None)
+    paths.setdefault("payment_gmv_col_acnt", None)
+    paths.setdefault("payment_gmv_col_gmv", None)
     result = {}
     for k, v in paths.items():
         if k == "news_cache_dir" and isinstance(v, str) and not Path(v).is_absolute():
             result[k] = BASE / v
         elif k.endswith("_excel"):
             result[k] = v  # 파일명만 저장, base_dir과 조합해 사용
+        elif k in GMV_PATH_KEYS:
+            result[k] = v
         else:
             result[k] = BASE / v if isinstance(v, str) and not Path(v).is_absolute() else v
     return result
